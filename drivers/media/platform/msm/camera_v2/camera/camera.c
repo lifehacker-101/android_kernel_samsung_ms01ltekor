@@ -35,6 +35,9 @@
 #define fh_to_private(__fh) \
 	container_of(__fh, struct camera_v4l2_private, fh)
 
+extern struct task_struct	*qdaemon_task;
+#define QDAEMON "mm-qcamera"
+
 struct camera_v4l2_private {
 	struct v4l2_fh fh;
 	unsigned int stream_id;
@@ -65,12 +68,10 @@ static int camera_check_event_status(struct v4l2_event *event)
 		(struct msm_v4l2_event_data *)&event->u.data[0];
 
 	if (event_data->status > MSM_CAMERA_ERR_EVT_BASE) {
-		pr_err("%s : event_data status out of bounds\n",
-				__func__);
-		pr_err("%s : Line %d event_data->status 0X%x\n",
-				__func__, __LINE__, event_data->status);
+	    pr_err("%s : event_data->status failed!", __func__);
 	    return -EFAULT;
 	}
+
 	return 0;
 }
 
@@ -511,9 +512,9 @@ static int camera_v4l2_fh_release(struct file *filep)
 	if (sp) {
 		v4l2_fh_del(&sp->fh);
 		v4l2_fh_exit(&sp->fh);
-		kzfree(sp);
-		sp = NULL;
 	}
+
+	kzfree(sp);
 	return 0;
 }
 
@@ -548,15 +549,9 @@ static int camera_v4l2_vb2_q_init(struct file *filep)
 static void camera_v4l2_vb2_q_release(struct file *filep)
 {
 	struct camera_v4l2_private *sp = filep->private_data;
-	if(sp)
-	{
-		if(sp->vb2_q.drv_priv != NULL)
-		{
-			kzfree(sp->vb2_q.drv_priv);
-			sp->vb2_q.drv_priv = NULL;
-		}
-		vb2_queue_release(&sp->vb2_q);
-	}
+
+	kzfree(sp->vb2_q.drv_priv);
+	vb2_queue_release(&sp->vb2_q);
 }
 
 static int camera_v4l2_open(struct file *filep)
@@ -598,6 +593,17 @@ static int camera_v4l2_open(struct file *filep)
 		rc = msm_post_event(&event, MSM_POST_EVT_TIMEOUT);
 		if (rc < 0) {
 		    pr_err("%s, __dbg: post fail \n",__func__);
+                   if (qdaemon_task) {
+                       if (!strncmp(qdaemon_task->comm, QDAEMON, strlen(QDAEMON))) {
+                            pr_err("%s, kill daemon", __func__);
+                            send_sig(SIGKILL, qdaemon_task, 0);
+                            pr_err("%s, kill this", __func__);
+                            send_sig(SIGKILL, current, 0);
+                       } else
+                            pr_err("%s, now (%s : %d)", __func__,
+                                   qdaemon_task->comm, task_pid_nr(qdaemon_task));
+                   } else
+                     pr_err("error!! can't look for daemon");
 		    goto post_fail;
 		}
 		rc = camera_check_event_status(&event);
@@ -605,8 +611,6 @@ static int camera_v4l2_open(struct file *filep)
 		    pr_err("%s : camera_check_event_status", __func__);
 		    goto post_fail;
 		}
-		/* Disable power colapse latency */
-		msm_pm_qos_update_request(CAMERA_DISABLE_PC_LATENCY);
 	} else {
 		rc = msm_create_command_ack_q(pvdev->vdev->num,
 			atomic_read(&pvdev->opened));
@@ -659,8 +663,6 @@ static int camera_v4l2_close(struct file *filep)
 
 	if (atomic_read(&pvdev->opened) == 0) {
 
-		/* Enable power colapse latency */
-		msm_pm_qos_update_request(CAMERA_ENABLE_PC_LATENCY);
 		camera_pack_event(filep, MSM_CAMERA_SET_PARM,
 			MSM_CAMERA_PRIV_DEL_STREAM, -1, &event);
 

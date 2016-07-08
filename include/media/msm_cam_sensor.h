@@ -9,7 +9,7 @@
 #include <linux/i2c.h>
 
 #define I2C_SEQ_REG_SETTING_MAX   5
-#define I2C_SEQ_REG_DATA_MAX      256
+#define I2C_SEQ_REG_DATA_MAX      20
 #define MAX_CID                   16
 
 #define MSM_SENSOR_MCLK_8HZ   8000000
@@ -38,19 +38,16 @@
 #define NUM_ACTUATOR_DIR 2
 #define MAX_ACTUATOR_SCENARIO 8
 #define MAX_ACTUATOR_REGION 5
-#define MAX_ACTUATOR_INIT_SET 50 //12
+#define MAX_ACTUATOR_INIT_SET 12
 #define MAX_ACTUATOR_REG_TBL_SIZE 8
-#define MAX_ACTUATOR_AF_TOTAL_STEPS 1024
 
 #define MOVE_NEAR 0
 #define MOVE_FAR  1
 
-#define MSM_ACTUATOR_MOVE_SIGNED_FAR -1
-#define MSM_ACTUATOR_MOVE_SIGNED_NEAR  1
+#define MAX_EEPROM_NAME 32
 
 #define MAX_EEPROM_NAME 32
 
-#define MAX_AF_ITERATIONS 3
 #define MAX_NUMBER_OF_STEPS 47
 
 //************************************* Native functionalities for YUV sensor added by jai.prakash
@@ -61,20 +58,7 @@
 #define EXT_CAM_EFFECT		5
 #define EXT_CAM_SCENE_MODE	6
 #define EXT_CAM_SENSOR_MODE	7
-#define EXT_CAM_CONTRAST	8
-#define EXT_CAM_EXIF		9
-#define EXT_CAM_SET_AE_AWB	10
-//Focus related enums
-#define EXT_CAM_AF		11
-#define EXT_CAM_FOCUS		12
-#define EXT_CAM_SET_TOUCHAF_POS	13
-#define EXT_CAM_SET_AF_STATUS	14
-#define EXT_CAM_GET_AF_STATUS	15
-#define EXT_CAM_GET_AF_RESULT	16
-#define EXT_CAM_SET_AF_STOP	17
-#define EXT_CAM_FLASH_MODE      18
-#define EXT_CAM_SET_FLASH	19
-#define EXT_CAM_VT_MODE		20
+
 //Exposure Compensation
 #define CAMERA_EV_M4		0
 #define CAMERA_EV_M3		1
@@ -144,12 +128,8 @@
 #define CAMERA_SCENE_AGAINST_LIGHT	16
 #define CAMERA_SCENE_NIGHT		6
 
-#define CAMERA_SCENE_PORTRAIT		8
+#define CAMERA_SCENE_PORTRAIT		7
 #define CAMERA_SCENE_TEXT		19
-//AF modes
-#define CAMERA_AF_MACRO         2
-#define CAMERA_AF_AUTO          0
-#define CAMERA_AF_OCR           3
 
 
 #define CAMERA_MODE_INIT                0
@@ -157,22 +137,6 @@
 #define CAMERA_MODE_CAPTURE             2
 #define CAMERA_MODE_RECORDING           3
 
-//Flash modes
-#define CAMERA_FLASH_OFF	0
-#define CAMERA_FLASH_ON		2
-#define CAMERA_FLASH_AUTO	1
-#define CAMERA_FLASH_TORCH	3
-
-#define CAMERA_CONTRAST_LV0			0
-#define CAMERA_CONTRAST_LV1			1
-#define CAMERA_CONTRAST_LV2			2
-#define CAMERA_CONTRAST_LV3			3
-#define CAMERA_CONTRAST_LV4			4
-#define CAMERA_CONTRAST_LV5			5
-#define CAMERA_CONTRAST_LV6			6
-#define CAMERA_CONTRAST_LV7			7
-#define CAMERA_CONTRAST_LV8			8
-#define CAMERA_CONTRAST_LV9			9
 
 //**************************************
 
@@ -218,9 +182,8 @@ enum msm_sensor_power_seq_gpio_t {
 	SENSOR_GPIO_VT_STANDBY,
 	SENSOR_GPIO_EXT_VANA_POWER,
 	SENSOR_GPIO_EXT_VIO_POWER,
+	SENSOR_GPIO_EXT_VCORE_POWER,
 	SENSOR_GPIO_EXT_CAMIO_EN,
-	SENSOR_GPIO_EXT_VAF_POWER,
-	SENSOR_GPIO_MIPI_CHANGE,
 	SENSOR_GPIO_MAX,
 };
 
@@ -229,6 +192,10 @@ enum msm_camera_vreg_name_t {
 	CAM_VIO,
 	CAM_VAF,
 	CAM_VANA,
+#if defined(CONFIG_MACH_CHAGALL_KDI) || defined(CHAGALLLTE_KDDI_CAMERA)
+	VT_CAM_VDIG,
+	VT_CAM_VANA,
+#endif
 	CAM_VREG_MAX,
 };
 
@@ -480,7 +447,6 @@ enum eeprom_cfg_type_t {
 	CFG_EEPROM_ERASE,
 	CFG_EEPROM_POWER_ON,
 	CFG_EEPROM_POWER_OFF,
-	CFG_EEPROM_READ_DATA_FROM_HW,
 };
 struct eeprom_get_t {
 	uint32_t num_bytes;
@@ -541,7 +507,6 @@ enum msm_actuator_cfg_type_t {
 	CFG_SET_DEFAULT_FOCUS,
         CFG_SET_POSITION,
 	CFG_MOVE_FOCUS,
-	CFG_SET_ACTUATOR_SW_LANDING,
 };
 
 enum actuator_type {
@@ -549,7 +514,6 @@ enum actuator_type {
 	ACTUATOR_PIEZO,
 	ACTUATOR_HALL_EFFECT,
 	ACTUATOR_HVCM,
-	ACTUATOR_DW9804,
 };
 
 enum msm_actuator_data_type {
@@ -663,12 +627,6 @@ struct msm_actuator_cfg_data {
 enum msm_actuator_write_type {
 	MSM_ACTUATOR_WRITE_HW_DAMP,
 	MSM_ACTUATOR_WRITE_DAC,
-	MSM_ACTUATOR_WRITE_DAC_SEQ,
-};
-
-enum msm_actuator_init_focus_type{
-  MSM_ACTUATOR_INIT_FOCUS_DELAY = 0xDD,
-  MSM_ACTUATOR_INIT_FOCUS_READ_STATUS = 0xDC,  
 };
 
 struct msm_actuator_reg_params_t {
@@ -685,9 +643,6 @@ enum msm_camera_led_config_t {
 	MSM_CAMERA_LED_HIGH,
 	MSM_CAMERA_LED_INIT,
 	MSM_CAMERA_LED_RELEASE,
-#if defined(CONFIG_MACH_VICTORLTE_CTC) || defined(CONFIG_SEC_MEGA2_PROJECT)
-	MSM_CAMERA_LED_FACTORY = 8,
-#endif
 };
 
 struct msm_camera_led_cfg_t {
@@ -712,21 +667,6 @@ struct ioctl_native_cmd {
         unsigned short value_1;
         unsigned short value_2;
         unsigned short value_3;
-};
-
-typedef struct
-{
-	unsigned short iso;
-	unsigned short shutterspeed;
-	unsigned short isFlashOn;
-} exif_data_t;
-
-enum sensor_af_e {
-	SENSOR_AF_CANCEL = 1,
-	SENSOR_AF_START,
-	SENSOR_AF_PRE_FLASH_ON,
-	SENSOR_AF_PRE_FLASH_OFF,
-	SENSOR_AF_PRE_FLASH_AE_STABLE,
 };
 
 #define VIDIOC_MSM_SENSOR_CFG \
@@ -759,8 +699,6 @@ enum sensor_af_e {
 #define VIDIOC_MSM_SENSOR_NATIVE_CMD \
 	_IOWR('V', BASE_VIDIOC_PRIVATE + 10, struct ioctl_native_cmd)
 
-#define VIDIOC_MSM_SENSOR_GET_EXIF_DATA \
-		_IOWR('V', BASE_VIDIOC_PRIVATE + 11, exif_data_t)
 #define MSM_V4L2_PIX_FMT_META v4l2_fourcc('M', 'E', 'T', 'A') /* META */
 
 #endif /* __LINUX_MSM_CAM_SENSOR_H */

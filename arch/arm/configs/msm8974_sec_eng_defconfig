@@ -69,7 +69,6 @@ CONFIG_SAMSUNG_BATTERY_ENG_TEST=y
 
 #enable systrace
 CONFIG_ENABLE_DEFAULT_TRACERS=y
-CONFIG_SEC_NET_FILTER=y
 
 #enable memory device driver(/dev/mem)
 CONFIG_DEVMEM=y

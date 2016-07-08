@@ -40,12 +40,7 @@
 #define ISPIF_INTF_CMD_DISABLE_IMMEDIATELY    0x02
 
 #define ISPIF_TIMEOUT_SLEEP_US                1000
-#if defined(CONFIG_MACH_VICTORLTE_CTC) || defined(CONFIG_MACH_AFYONLTE_TMO) \
-	|| defined (CONFIG_MACH_AFYONLTE_MTR) || defined (CONFIG_MACH_AFYONLTE_CAN)
-#define ISPIF_TIMEOUT_ALL_US                1000000
-#else
 #define ISPIF_TIMEOUT_ALL_US                500000
-#endif
 
 #define CSID_VERSION_V30 0x30000000
 
@@ -100,8 +95,8 @@ static void msm_ispif_io_dump_start_reg(struct ispif_device *ispif)
 static inline int msm_ispif_is_intf_valid(uint32_t csid_version,
 	uint8_t intf_type)
 {
-	return (csid_version <= CSID_VERSION_V2 && intf_type != VFE0) ?
-		false : true;
+	return ((csid_version <= CSID_VERSION_V2 && intf_type != VFE0) ||
+		(intf_type >= VFE_MAX)) ? false : true;
 }
 
 static struct msm_cam_clk_info ispif_8974_ahb_clk_info[] = {
@@ -169,7 +164,8 @@ static int msm_ispif_reset_hw(struct ispif_device *ispif)
 	CDBG("%s: VFE0 done\n", __func__);
 	if (timeout <= 0) {
 		pr_err("%s: VFE0 reset wait timeout\n", __func__);
-		return -ETIMEDOUT;
+		rc = -ETIMEDOUT;
+		goto end;
 	}
 
 	if (ispif->hw_num_isps > 1) {
@@ -179,10 +175,12 @@ static int msm_ispif_reset_hw(struct ispif_device *ispif)
 		CDBG("%s: VFE1 done\n", __func__);
 		if (timeout <= 0) {
 			pr_err("%s: VFE1 reset wait timeout\n", __func__);
-			return -ETIMEDOUT;
+			rc = -ETIMEDOUT;
+			goto end;
 		}
 	}
-
+	pr_info("%s: ISPIF reset hw done", __func__);
+end:
 	rc = msm_cam_clk_enable(&ispif->pdev->dev,
 		ispif_8974_reset_clk_info, reset_clk,
 		ARRAY_SIZE(ispif_8974_reset_clk_info), 0);
@@ -894,7 +892,8 @@ static int msm_ispif_set_vfe_info(struct ispif_device *ispif,
 	struct msm_ispif_vfe_info *vfe_info)
 {
 	memcpy(&ispif->vfe_info, vfe_info, sizeof(struct msm_ispif_vfe_info));
-
+	if (ispif->vfe_info.num_vfe > ispif->hw_num_isps)
+		return -EINVAL;
 	return 0;
 }
 
@@ -966,7 +965,7 @@ static int msm_ispif_init(struct ispif_device *ispif,
 	rc = msm_ispif_reset(ispif);
 	if (rc == 0) {
 		ispif->ispif_state = ISPIF_POWER_UP;
-		CDBG("%s: power up done\n", __func__);
+		pr_info("%s: power up done\n", __func__);
 		goto end;
 	}
 
@@ -989,6 +988,12 @@ static void msm_ispif_release(struct ispif_device *ispif)
 		return;
 	}
 
+	if(of_device_is_compatible(ispif->pdev->dev.of_node,
+		"qcom,ispif-v3.0")) {
+		/*Currently HW reset is implemented for 8974 only*/
+		msm_ispif_reset_hw(ispif);
+	}
+
 	/* make sure no streaming going on */
 	msm_ispif_reset(ispif);
 
@@ -1001,6 +1006,7 @@ static void msm_ispif_release(struct ispif_device *ispif)
 	iounmap(ispif->clk_mux_base);
 
 	ispif->ispif_state = ISPIF_POWER_DOWN;
+	pr_info("%s: power down done", __func__);
 }
 
 static long msm_ispif_cmd(struct v4l2_subdev *sd, void *arg)

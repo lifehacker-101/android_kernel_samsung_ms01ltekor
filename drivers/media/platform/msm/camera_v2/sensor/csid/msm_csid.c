@@ -48,6 +48,13 @@ static int msm_csid_cid_lut(
 		return -EINVAL;
 	}
 	for (i = 0; i < csid_lut_params->num_cid && i < 16; i++) {
+		if (csid_lut_params->vc_cfg[i]->cid >=
+			csid_lut_params->num_cid ||
+			csid_lut_params->vc_cfg[i]->cid < 0) {
+			pr_err("%s: cid outside range %d\n",
+				__func__, csid_lut_params->vc_cfg[i]->cid);
+			return -EINVAL;
+		}
 		CDBG("%s lut params num_cid = %d, cid = %d, dt = %x, df = %d\n",
 			__func__,
 			csid_lut_params->num_cid,
@@ -82,8 +89,8 @@ static void msm_csid_set_debug_reg(void __iomem *csidbase,
 {
 	uint32_t val = 0;
 	val = ((1 << csid_params->lane_cnt) - 1) << 20;
-	msm_camera_io_w(0xffffffff | val, csidbase + CSID_IRQ_MASK_ADDR);
-	msm_camera_io_w(0xffffffff | val, csidbase + CSID_IRQ_CLEAR_CMD_ADDR);
+	msm_camera_io_w(0x7f010800 | val, csidbase + CSID_IRQ_MASK_ADDR);
+	msm_camera_io_w(0x7f010800 | val, csidbase + CSID_IRQ_CLEAR_CMD_ADDR);
 }
 #else
 static void msm_csid_set_debug_reg(void __iomem *csidbase,
@@ -159,8 +166,8 @@ static irqreturn_t msm_csid_irq(int irq_num, void *data)
 	csidbase = csid_dev->base;
 
 	irq = msm_camera_io_r(csid_dev->base + CSID_IRQ_STATUS_ADDR);
-	CDBG("%s CSID%d_IRQ_STATUS_ADDR = 0x%x unmapped  = %x\n",
-		 __func__, csid_dev->pdev->id, irq, msm_camera_io_r(csid_dev->base + 0x68));
+	CDBG("%s CSID%d_IRQ_STATUS_ADDR = 0x%x\n",
+		 __func__, csid_dev->pdev->id, irq);
 	if (irq & (0x1 << CSID_RST_DONE_IRQ_BITSHIFT))
 			complete(&csid_dev->reset_complete);
 	msm_camera_io_w(irq, csid_dev->base + CSID_IRQ_CLEAR_CMD_ADDR);

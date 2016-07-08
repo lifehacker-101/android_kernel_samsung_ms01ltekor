@@ -163,8 +163,6 @@ CONFIG_SWAP_ENABLE_READAHEAD=n
 #Input Booster
 CONFIG_INPUT_BOOSTER=y
 
-#URL driver
-CONFIG_SEC_NET_FILTER=y
 
 # Enable Certified code merge - start
 CONFIG_CRYPTO_TEST=y
