@@ -395,6 +395,14 @@ int mdss_debugfs_init(struct mdss_data_type *mdata)
 	debugfs_create_u32("min_mdp_clk", 0644, mdd->root,
 			(u32 *)&mdata->min_mdp_clk);
 
+#if defined(CONFIG_MACH_LT03_TMO)
+	debugfs_create_u64("min_uhd_bus_vote", 0644,mdd->root,
+		(u64 *)&mdata->perf_tune.min_uhd_bus_vote);
+
+	debugfs_create_u64("min_qhd_bus_vote", 0644,mdd->root,
+		(u64 *)&mdata->perf_tune.min_qhd_bus_vote);
+#endif
+
 	mdata->debug_inf.debug_data = mdd;
 
 	return 0;
@@ -474,7 +482,7 @@ static inline struct mdss_mdp_misr_map *mdss_misr_get_map(u32 block_id)
 {
 	struct mdss_mdp_misr_map *map;
 
-	if (block_id > DISPLAY_MISR_MDP) {
+	if (block_id > DISPLAY_MISR_HDMI && block_id != DISPLAY_MISR_MDP) {
 		pr_err("MISR Block id (%d) out of range\n", block_id);
 		return NULL;
 	}
@@ -497,6 +505,12 @@ int mdss_misr_set(struct mdss_data_type *mdata,
 	u32 config = 0, val = 0;
 	u32 mixer_num = 0;
 	bool is_valid_wb_mixer = true;
+
+	if (!mdata || !req || !ctl) {
+		pr_err("Invalid input params: mdata = %p req = %p ctl = %p",
+			mdata, req, ctl);
+		return -EINVAL;
+	}
 	map = mdss_misr_get_map(req->block_id);
 	if (!map) {
 		pr_err("Invalid MISR Block=%d\n", req->block_id);
