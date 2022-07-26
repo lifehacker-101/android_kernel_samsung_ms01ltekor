@@ -43,6 +43,8 @@ static DEFINE_IDR(ctrl_idr);
 static struct device_type slim_dev_type;
 static struct device_type slim_ctrl_type;
 
+extern unsigned int system_rev;
+
 static const struct slim_device_id *slim_match(const struct slim_device_id *id,
 					const struct slim_device *slim_dev)
 {
@@ -1462,7 +1464,7 @@ EXPORT_SYMBOL_GPL(slim_disconnect_ports);
  * Client will call slim_port_get_xfer_status to get error and/or number of
  * bytes transferred if used asynchronously.
  */
-int slim_port_xfer(struct slim_device *sb, u32 ph, u8 *iobuf, u32 len,
+int slim_port_xfer(struct slim_device *sb, u32 ph, phys_addr_t iobuf, u32 len,
 				struct completion *comp)
 {
 	struct slim_controller *ctrl = sb->ctrl;
@@ -1492,7 +1494,7 @@ EXPORT_SYMBOL_GPL(slim_port_xfer);
  * processed from the multiple transfers.
  */
 enum slim_port_err slim_port_get_xfer_status(struct slim_device *sb, u32 ph,
-			u8 **done_buf, u32 *done_len)
+			phys_addr_t *done_buf, u32 *done_len)
 {
 	struct slim_controller *ctrl = sb->ctrl;
 	u8 pn = SLIM_HDL_TO_PORT(ph);
@@ -1505,7 +1507,7 @@ enum slim_port_err slim_port_get_xfer_status(struct slim_device *sb, u32 ph,
 	 */
 	if (la != SLIM_LA_MANAGER) {
 		if (done_buf)
-			*done_buf = NULL;
+			*done_buf = 0;
 		if (done_len)
 			*done_len = 0;
 		return SLIM_P_NOT_OWNED;
@@ -1868,10 +1870,10 @@ int slim_dealloc_ch(struct slim_device *sb, u16 chanh)
 {
 	struct slim_controller *ctrl = sb->ctrl;
 	u8 chan = SLIM_HDL_TO_CHIDX(chanh);
-	struct slim_ich *slc = &ctrl->chans[chan];
+	struct slim_ich *slc;
 	if (!ctrl)
 		return -EINVAL;
-
+	slc = &ctrl->chans[chan];
 	mutex_lock(&ctrl->sched.m_reconf);
 	if (slc->state == SLIM_CH_FREE) {
 		mutex_unlock(&ctrl->sched.m_reconf);

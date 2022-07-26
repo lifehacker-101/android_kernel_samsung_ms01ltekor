@@ -145,6 +145,7 @@ struct mdss_mdp_vsync_handler {
 	bool enabled;
 	bool cmd_post_flush;
 	mdp_vsync_handler_t vsync_handler;
+	u32 ref_cnt;
 	struct list_head list;
 };
 
@@ -168,6 +169,7 @@ struct mdss_mdp_ctl {
 	u32 ref_cnt;
 	int power_on;
 
+	u32 panel_ndx;
 	u32 intf_num;
 	u32 intf_type;
 
@@ -202,6 +204,7 @@ struct mdss_mdp_ctl {
 	struct mdss_mdp_vsync_handler vsync_handler;
 
 	struct mdss_mdp_img_rect roi;
+	struct mdss_mdp_img_rect roi_bkup;
 	u8 roi_changed;
 
 	int (*start_fnc) (struct mdss_mdp_ctl *ctl);
@@ -217,7 +220,9 @@ struct mdss_mdp_ctl {
 					struct mdss_mdp_vsync_handler *);
 	int (*config_fps_fnc) (struct mdss_mdp_ctl *ctl,
 				struct mdss_mdp_ctl *sctl, int new_fps);
-
+#if defined(CONFIG_FB_MSM_MIPI_MAGNA_OCTA_VIDEO_WXGA_PT_DUAL_PANEL)
+	int (*panel_switch_reset_fnc)(struct mdss_mdp_ctl *ctl);
+#endif
 	struct blocking_notifier_head notifier_head;
 
 	void *priv_data;
@@ -378,6 +383,9 @@ struct mdss_mdp_pipe {
 	u8 vert_deci;
 	struct mdss_mdp_img_rect src;
 	struct mdss_mdp_img_rect dst;
+	u32 phase_step_x;
+	u32 phase_step_y;
+
 	struct mdss_mdp_format_params *src_fmt;
 	struct mdss_mdp_plane_sizes src_planes;
 
@@ -505,6 +513,7 @@ unsigned long mdss_mdp_get_clk_rate(u32 clk_idx);
 int mdss_mdp_vsync_clk_enable(int enable);
 void mdss_mdp_clk_ctrl(int enable, int isr);
 struct mdss_data_type *mdss_mdp_get_mdata(void);
+void mdss_mdp_underrun_dump_info(struct msm_fb_data_type *);
 
 int mdss_mdp_overlay_init(struct msm_fb_data_type *mfd);
 int mdss_mdp_overlay_req_check(struct msm_fb_data_type *mfd,
@@ -534,6 +543,7 @@ int mdss_mdp_ctl_splash_finish(struct mdss_mdp_ctl *ctl, bool handoff);
 int mdss_mdp_ctl_setup(struct mdss_mdp_ctl *ctl);
 int mdss_mdp_ctl_split_display_setup(struct mdss_mdp_ctl *ctl,
 		struct mdss_panel_data *pdata);
+
 int mdss_mdp_ctl_destroy(struct mdss_mdp_ctl *ctl);
 int mdss_mdp_ctl_start(struct mdss_mdp_ctl *ctl, bool handoff);
 int mdss_mdp_ctl_stop(struct mdss_mdp_ctl *ctl);
@@ -541,6 +551,10 @@ int mdss_mdp_ctl_intf_event(struct mdss_mdp_ctl *ctl, int event, void *arg);
 int mdss_mdp_perf_bw_check(struct mdss_mdp_ctl *ctl,
 		struct mdss_mdp_pipe **left_plist, int left_cnt,
 		struct mdss_mdp_pipe **right_plist, int right_cnt);
+
+#if defined(CONFIG_FB_MSM_EDP_SAMSUNG)
+int mdss_mdp_scan_pipes(void);
+#endif
 int mdss_mdp_perf_calc_pipe(struct mdss_mdp_pipe *pipe,
 	struct mdss_mdp_perf_params *perf, struct mdss_mdp_img_rect *roi);
 int mdss_mdp_ctl_notify(struct mdss_mdp_ctl *ctl, int event);
@@ -685,9 +699,10 @@ struct mdss_mdp_ctl *mdss_mdp_ctl_mixer_switch(struct mdss_mdp_ctl *ctl,
 void mdss_mdp_set_roi(struct mdss_mdp_ctl *ctl,
 					struct mdp_display_commit *data);
 
-int mdss_mdp_wb_set_format(struct msm_fb_data_type *mfd, int dst_format);
+int mdss_mdp_wb_set_format(struct msm_fb_data_type *mfd, u32 dst_format);
 int mdss_mdp_wb_get_format(struct msm_fb_data_type *mfd,
 					struct mdp_mixer_cfg *mixer_cfg);
+void mdss_mdp_underrun_clk_info(void);
 
 int mdss_mdp_wb_set_secure(struct msm_fb_data_type *mfd, int enable);
 int mdss_mdp_wb_get_secure(struct msm_fb_data_type *mfd, uint8_t *enable);
@@ -703,5 +718,9 @@ int mdss_mdp_pipe_program_pixel_extn(struct mdss_mdp_pipe *pipe);
 #define mfd_to_wb(mfd) (((struct mdss_overlay_private *)\
 				(mfd->mdp.private1))->wb)
 
-int  mdss_mdp_ctl_reset(struct mdss_mdp_ctl *ctl);
+int mdss_mdp_ctl_reset(struct mdss_mdp_ctl *ctl);
+
+void dumpreg(void);
+void mdss_dsi_debug_check_te(struct mdss_panel_data *pdata);
+void mdp5_dump_regs(void);
 #endif /* MDSS_MDP_H */

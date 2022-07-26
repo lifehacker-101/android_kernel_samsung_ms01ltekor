@@ -30,13 +30,19 @@
 #include "mdss_panel.h"
 #include "mdss_mdp.h"
 
+#if defined(CONFIG_FB_MSM_MIPI_SAMSUNG_OCTA_VIDEO_HD_PANEL)
+#define STATUS_CHECK_INTERVAL_MS 400
+#define DSI_STATUS_CHECK_DISABLE 0
+#else
 #define STATUS_CHECK_INTERVAL_MS 5000
-#define STATUS_CHECK_INTERVAL_MIN_MS 200
 #define DSI_STATUS_CHECK_DISABLE 1
+#endif
+#define STATUS_CHECK_INTERVAL_MIN_MS 200
 
 static uint32_t interval = STATUS_CHECK_INTERVAL_MS;
 static uint32_t dsi_status_disable = DSI_STATUS_CHECK_DISABLE;
 struct dsi_status_data *pstatus_data;
+int get_lcd_attached(void);
 
 /*
  * check_dsi_ctrl_status() - Reads MFD structure and
@@ -82,6 +88,11 @@ static int fb_event_callback(struct notifier_block *self,
 				struct dsi_status_data, fb_notifier);
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
 
+	if(!evdata) {
+		pr_err("%s: evdata is NULL\n", __func__);
+		return NOTIFY_BAD;
+	}
+
 	pdata->mfd = evdata->info->par;
 	ctrl_pdata = container_of(dev_get_platdata(&pdata->mfd->pdev->dev),
 				struct mdss_dsi_ctrl_pdata, panel_data);
@@ -90,11 +101,11 @@ static int fb_event_callback(struct notifier_block *self,
 		return NOTIFY_BAD;
 	}
 	if (dsi_status_disable) {
-		pr_debug("%s: DSI status disabled\n", __func__);
+		pr_err("%s: DSI status disabled\n", __func__);
 		return NOTIFY_DONE;
 	}
 
-	if (event == FB_EVENT_BLANK && evdata) {
+	if (event == FB_EVENT_BLANK) {
 		int *blank = evdata->data;
 		switch (*blank) {
 		case FB_BLANK_UNBLANK:
@@ -154,6 +165,13 @@ int __init mdss_dsi_status_init(void)
 {
 	int rc = 0;
 
+#if defined(CONFIG_FB_MSM8x26_MDSS_CHECK_LCD_CONNECTION)
+	if (get_lcd_attached() == 0)
+	{
+		pr_err("%s: get_lcd_attached(0)!\n",__func__);
+		return rc;
+	}
+#endif
 	pstatus_data = kzalloc(sizeof(struct dsi_status_data), GFP_KERNEL);
 	if (!pstatus_data) {
 		pr_err("%s: can't allocate memory\n", __func__);

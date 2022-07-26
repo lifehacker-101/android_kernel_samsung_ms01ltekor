@@ -49,7 +49,7 @@ static inline u32 mdss_mdp_pipe_read(struct mdss_mdp_pipe *pipe, u32 reg)
 }
 
 static u32 mdss_mdp_smp_mmb_reserve(struct mdss_mdp_pipe_smp_map *smp_map,
-	size_t n)
+	size_t n, bool force_alloc)
 {
 	u32 i, mmb;
 	u32 fixed_cnt = bitmap_weight(smp_map->fixed, SMP_MB_CNT);
@@ -67,12 +67,21 @@ static u32 mdss_mdp_smp_mmb_reserve(struct mdss_mdp_pipe_smp_map *smp_map,
 	 * that calls for change in smp configuration (addition/removal
 	 * of smp blocks), so that fallback solution happens.
 	 */
+#if defined(CONFIG_ARCH_MSM8226) || (CONFIG_ARCH_MSM8974)
+	if (i != 0 && n != i && !force_alloc) {
+		pr_debug("Can't change mmb config, num_blks: %d alloc: %d\n",
+			n, i);
+		pr_debug("Can't change mmb configuration in set call\n");
+		return 0;
+	}
+#else
 	if (i != 0 && n != i) {
 		pr_debug("Can't change mmb config, num_blks: %d alloc: %d\n",
 			n, i);
+		pr_debug("Can't change mmb configuration in set call\n");
 		return 0;
 	}
-
+#endif
 	/*
 	 * Clear previous SMP reservations and reserve according to the
 	 * latest configuration
@@ -210,6 +219,7 @@ int mdss_mdp_smp_reserve(struct mdss_mdp_pipe *pipe)
 	struct mdss_mdp_plane_sizes ps;
 	int i;
 	int rc = 0, rot_mode = 0, wb_mixer = 0;
+	bool force_alloc = 0;
 	u32 nlines, format, seg_w;
 	u16 width;
 
@@ -296,6 +306,13 @@ int mdss_mdp_smp_reserve(struct mdss_mdp_pipe *pipe)
 	if (pipe->mixer->type == MDSS_MDP_MIXER_TYPE_WRITEBACK)
 		wb_mixer = 1;
 
+	/*
+	 * Don't want to allow SMP changes for backend composition pipes
+	 * inorder to preserve SMPs as much as possible.
+	 * On the contrary for non backend composition pipes we should
+	 * allow SMP allocations to prevent composition failures.
+	 */
+	force_alloc = !(pipe->flags & MDP_BACKEND_COMPOSITION);
 	mutex_lock(&mdss_mdp_smp_lock);
 	for (i = (MAX_PLANES - 1); i >= ps.num_planes; i--) {
 		if (bitmap_weight(pipe->smp_map[i].allocated, SMP_MB_CNT)) {
@@ -325,13 +342,13 @@ int mdss_mdp_smp_reserve(struct mdss_mdp_pipe *pipe)
 		pr_debug("reserving %d mmb for pnum=%d plane=%d\n",
 				num_blks, pipe->num, i);
 		reserved = mdss_mdp_smp_mmb_reserve(&pipe->smp_map[i],
-			num_blks);
+			num_blks, force_alloc);
 		if (reserved < num_blks)
 			break;
 	}
 
 	if (reserved < num_blks) {
-		pr_debug("insufficient MMB blocks\n");
+		pr_err("insufficient MMB blocks\n");
 		for (; i >= 0; i--)
 			mdss_mdp_smp_mmb_free(pipe->smp_map[i].reserved,
 				false);
@@ -821,8 +838,6 @@ error:
 	return rc;
 }
 
-
-
 static int mdss_mdp_image_setup(struct mdss_mdp_pipe *pipe,
 					struct mdss_mdp_data *data)
 {
@@ -867,13 +882,26 @@ static int mdss_mdp_image_setup(struct mdss_mdp_pipe *pipe,
 	dst = pipe->dst;
 	src = pipe->src;
 
-	if (pipe->mixer->type == MDSS_MDP_MIXER_TYPE_INTF)
+	if (pipe->mixer->type == MDSS_MDP_MIXER_TYPE_INTF) {
 		mdss_mdp_crop_rect(&src, &dst, &sci);
+        if (pipe->flags & MDP_FLIP_LR) {
+			src.x = pipe->src.x + (pipe->src.x + pipe->src.w)
+				- (src.x + src.w);
+		}
+		if (pipe->flags & MDP_FLIP_UD) {
+			src.y = pipe->src.y + (pipe->src.y + pipe->src.h)
+				- (src.y + src.h);
+		}
+	}
 
 	src_size = (src.h << 16) | src.w;
 	src_xy = (src.y << 16) | src.x;
 	dst_size = (dst.h << 16) | dst.w;
+#if defined(CONFIG_MDSS_UD_FLIP)
+	dst_xy = (((pipe->mixer->height - pipe->dst.y - pipe->dst.h) << 16) | pipe->dst.x);
+#else
 	dst_xy = (dst.y << 16) | dst.x;
+#endif
 
 	ystride0 =  (pipe->src_planes.ystride[0]) |
 			(pipe->src_planes.ystride[1] << 16);

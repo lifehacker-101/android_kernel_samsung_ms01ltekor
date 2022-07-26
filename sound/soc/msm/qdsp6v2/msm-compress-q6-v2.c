@@ -580,6 +580,15 @@ static int msm_compr_configure_dsp(struct snd_compr_stream *cstream)
 	if (ret < 0)
 		pr_err("%s: Send SoftPause Param failed ret=%d\n",
 			__func__, ret);
+	/*
+	 * Setting the master volume gain to 0 while
+	 * configuring ASM session. This is to address
+	 * DSP pop noise issue where. This change is
+	 * there from begining may be DSP limitation
+	 */
+	ret = msm_compr_set_volume(cstream, 0, 0);
+	if (ret < 0)
+		pr_err("%s : Set Volume failed : %d", __func__, ret);
 
 	ret = q6asm_set_softvolume(ac, &softvol);
 	if (ret < 0)
@@ -1480,6 +1489,8 @@ static int msm_compr_copy(struct snd_compr_stream *cstream,
 	 * since the available bytes fits fragment_size, copy the data right away
 	 */
 	spin_lock_irqsave(&prtd->lock, flags);
+	if (prtd->gapless_state.gapless_transition)
+		prtd->gapless_state.gapless_transition = 0;
 	prtd->bytes_received += count;
 	if (atomic_read(&prtd->start)) {
 		if (atomic_read(&prtd->xrun)) {
@@ -1566,7 +1577,7 @@ static int msm_compr_set_metadata(struct snd_compr_stream *cstream,
 		return -EINVAL;
 
 	prtd = cstream->runtime->private_data;
-	if (!prtd && !prtd->audio_client)
+	if (!prtd->audio_client && !prtd)
 		return -EINVAL;
 	ac = prtd->audio_client;
 	if (metadata->key == SNDRV_COMPRESS_ENCODER_PADDING) {
@@ -1871,7 +1882,7 @@ static int msm_compr_add_volume_control(struct snd_soc_pcm_runtime *rtd)
 		 rtd->pcm->device, suffix);
 	fe_volume_control[0].name = mixer_str;
 	fe_volume_control[0].private_value = rtd->dai_link->be_id;
-	pr_debug("Registering new mixer ctl %s", mixer_str);
+	pr_debug("Registering new mixer ctl %s\n", mixer_str);
 	snd_soc_add_platform_controls(rtd->platform, fe_volume_control,
 				      ARRAY_SIZE(fe_volume_control));
 	kfree(mixer_str);
@@ -2046,7 +2057,6 @@ static struct snd_soc_platform_driver msm_soc_platform = {
 	.pcm_new	= msm_compr_new,
 	.controls       = msm_compr_gapless_controls,
 	.num_controls   = ARRAY_SIZE(msm_compr_gapless_controls),
-
 };
 
 static __devinit int msm_compr_dev_probe(struct platform_device *pdev)

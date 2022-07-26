@@ -542,6 +542,10 @@ struct station_parameters {
 	u16 capability;
 	u8 *ext_capab;
 	u8 ext_capab_len;
+	const u8 *supported_channels;
+	u8 supported_channels_len;
+	const u8 *supported_oper_classes;
+	u8 supported_oper_classes_len;
 };
 
 /**
@@ -3218,6 +3222,8 @@ cfg80211_vendor_cmd_alloc_reply_skb(struct wiphy *wiphy, int approxlen)
 {
 	return __cfg80211_alloc_reply_skb(wiphy, NL80211_CMD_TESTMODE,
 					  NL80211_ATTR_TESTDATA, approxlen);
+	return __cfg80211_alloc_reply_skb(wiphy, NL80211_CMD_VENDOR,
+					  NL80211_ATTR_VENDOR_DATA, approxlen);
 }
 
 /**

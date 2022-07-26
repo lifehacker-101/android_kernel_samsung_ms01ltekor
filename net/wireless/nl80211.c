@@ -4698,7 +4698,9 @@ static bool nl80211_valid_auth_type(enum nl80211_auth_type auth_type)
 static bool nl80211_valid_wpa_versions(u32 wpa_versions)
 {
 	return !(wpa_versions & ~(NL80211_WPA_VERSION_1 |
-				  NL80211_WPA_VERSION_2));
+				NL80211_WPA_VERSION_2 |
+/*WAPI*/
+				NL80211_WAPI_VERSION_1 ));
 }
 
 static int nl80211_authenticate(struct sk_buff *skb, struct genl_info *info)
@@ -6650,6 +6652,66 @@ static int nl80211_update_ft_ies(struct sk_buff *skb, struct genl_info *info)
 	return rdev->ops->update_ft_ies(&rdev->wiphy, dev, &ft_params);
 }
 
+#define NL80211_FLAG_NEED_WIPHY		0x01
+#define NL80211_FLAG_NEED_NETDEV	0x02
+#define NL80211_FLAG_NEED_RTNL		0x04
+#define NL80211_FLAG_CHECK_NETDEV_UP	0x08
+#define NL80211_FLAG_NEED_NETDEV_UP	(NL80211_FLAG_NEED_NETDEV |\
+					 NL80211_FLAG_CHECK_NETDEV_UP)
+
+static int nl80211_pre_doit(struct genl_ops *ops, struct sk_buff *skb,
+			    struct genl_info *info)
+{
+	struct cfg80211_registered_device *rdev;
+	struct net_device *dev;
+	int err;
+	bool rtnl = ops->internal_flags & NL80211_FLAG_NEED_RTNL;
+
+	if (rtnl)
+		rtnl_lock();
+
+	if (ops->internal_flags & NL80211_FLAG_NEED_WIPHY) {
+		rdev = cfg80211_get_dev_from_info(info);
+		if (IS_ERR(rdev)) {
+			if (rtnl)
+				rtnl_unlock();
+			return PTR_ERR(rdev);
+		}
+		info->user_ptr[0] = rdev;
+	} else if (ops->internal_flags & NL80211_FLAG_NEED_NETDEV) {
+		err = get_rdev_dev_by_ifindex(genl_info_net(info), info->attrs,
+					      &rdev, &dev);
+		if (err) {
+			if (rtnl)
+				rtnl_unlock();
+			return err;
+		}
+		if (ops->internal_flags & NL80211_FLAG_CHECK_NETDEV_UP &&
+		    !netif_running(dev)) {
+			cfg80211_unlock_rdev(rdev);
+			dev_put(dev);
+			if (rtnl)
+				rtnl_unlock();
+			return -ENETDOWN;
+		}
+		info->user_ptr[0] = rdev;
+		info->user_ptr[1] = dev;
+	}
+
+	return 0;
+}
+
+static void nl80211_post_doit(struct genl_ops *ops, struct sk_buff *skb,
+			      struct genl_info *info)
+{
+	if (info->user_ptr[0])
+		cfg80211_unlock_rdev(info->user_ptr[0]);
+	if (info->user_ptr[1])
+		dev_put(info->user_ptr[1]);
+	if (ops->internal_flags & NL80211_FLAG_NEED_RTNL)
+		rtnl_unlock();
+}
+
 static int nl80211_vendor_cmd(struct sk_buff *skb, struct genl_info *info)
 {
 	struct cfg80211_registered_device *rdev = info->user_ptr[0];
@@ -6748,66 +6810,6 @@ int cfg80211_vendor_cmd_reply(struct sk_buff *skb)
 	return genlmsg_reply(skb, rdev->cur_cmd_info);
 }
 EXPORT_SYMBOL(cfg80211_vendor_cmd_reply);
-
-#define NL80211_FLAG_NEED_WIPHY		0x01
-#define NL80211_FLAG_NEED_NETDEV	0x02
-#define NL80211_FLAG_NEED_RTNL		0x04
-#define NL80211_FLAG_CHECK_NETDEV_UP	0x08
-#define NL80211_FLAG_NEED_NETDEV_UP	(NL80211_FLAG_NEED_NETDEV |\
-					 NL80211_FLAG_CHECK_NETDEV_UP)
-
-static int nl80211_pre_doit(struct genl_ops *ops, struct sk_buff *skb,
-			    struct genl_info *info)
-{
-	struct cfg80211_registered_device *rdev;
-	struct net_device *dev;
-	int err;
-	bool rtnl = ops->internal_flags & NL80211_FLAG_NEED_RTNL;
-
-	if (rtnl)
-		rtnl_lock();
-
-	if (ops->internal_flags & NL80211_FLAG_NEED_WIPHY) {
-		rdev = cfg80211_get_dev_from_info(info);
-		if (IS_ERR(rdev)) {
-			if (rtnl)
-				rtnl_unlock();
-			return PTR_ERR(rdev);
-		}
-		info->user_ptr[0] = rdev;
-	} else if (ops->internal_flags & NL80211_FLAG_NEED_NETDEV) {
-		err = get_rdev_dev_by_ifindex(genl_info_net(info), info->attrs,
-					      &rdev, &dev);
-		if (err) {
-			if (rtnl)
-				rtnl_unlock();
-			return err;
-		}
-		if (ops->internal_flags & NL80211_FLAG_CHECK_NETDEV_UP &&
-		    !netif_running(dev)) {
-			cfg80211_unlock_rdev(rdev);
-			dev_put(dev);
-			if (rtnl)
-				rtnl_unlock();
-			return -ENETDOWN;
-		}
-		info->user_ptr[0] = rdev;
-		info->user_ptr[1] = dev;
-	}
-
-	return 0;
-}
-
-static void nl80211_post_doit(struct genl_ops *ops, struct sk_buff *skb,
-			      struct genl_info *info)
-{
-	if (info->user_ptr[0])
-		cfg80211_unlock_rdev(info->user_ptr[0]);
-	if (info->user_ptr[1])
-		dev_put(info->user_ptr[1]);
-	if (ops->internal_flags & NL80211_FLAG_NEED_RTNL)
-		rtnl_unlock();
-}
 
 static struct genl_ops nl80211_ops[] = {
 	{
@@ -7360,6 +7362,7 @@ static struct genl_ops nl80211_ops[] = {
 		.flags = GENL_ADMIN_PERM,
 		.internal_flags = NL80211_FLAG_NEED_WIPHY |
 				  NL80211_FLAG_NEED_RTNL,
+		.internal_flags = NL80211_FLAG_NEED_RTNL,
 	},
 };
 

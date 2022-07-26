@@ -99,17 +99,16 @@ static struct mdss_mdp_pipe *mdss_mdp_rotator_pipe_alloc(void)
 
 	mixer = mdss_mdp_wb_mixer_alloc(1);
 	if (!mixer) {
-		pr_debug("wb mixer alloc failed\n");
+		pr_err("wb mixer alloc failed\n");
 		return NULL;
 	}
 
 	pipe = mdss_mdp_pipe_alloc_dma(mixer);
 	if (!pipe) {
 		mdss_mdp_wb_mixer_destroy(mixer);
-		pr_debug("dma pipe allocation failed\n");
+		pr_err("dma pipe allocation failed\n");
 		return NULL;
 	}
-
 	pipe->mixer_stage = MDSS_MDP_STAGE_UNUSED;
 
 	return pipe;
@@ -732,6 +731,17 @@ int mdss_mdp_rotator_play(struct msm_fb_data_type *mfd,
 		pr_err("rotator queue error session id=%x\n", req->id);
 
 dst_buf_fail:
+	if(ret){ 
+		if (rot && rot->use_sync_pt){ 
+			if (rot->rot_sync_pt_data) { 
+				atomic_inc(&rot->rot_sync_pt_data->commit_cnt); 
+				mdss_fb_signal_timeline(rot->rot_sync_pt_data); 
+				pr_err("release fence as this commit is failed.\n"); 
+			} else { 
+				pr_err("rot_sync_pt_data is NULL\n"); 
+			}	 
+		} 
+	} 
 	mutex_unlock(&rotator_lock);
 	return ret;
 }

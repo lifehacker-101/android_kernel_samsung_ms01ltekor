@@ -260,6 +260,8 @@ static int wcd9xxx_slim_read_device(struct wcd9xxx *wcd9xxx, unsigned short reg,
 
 	if (ret)
 		pr_err("%s: Error, Codec read failed (%d)\n", __func__, ret);
+	if (ret == -5 )
+        panic("Force Panic due to Codec Write Fail");
 
 	return ret;
 }
@@ -289,6 +291,8 @@ static int wcd9xxx_slim_write_device(struct wcd9xxx *wcd9xxx,
 
 	if (ret)
 		pr_err("%s: Error, Codec write failed (%d)\n", __func__, ret);
+    if (ret == -5 )
+        panic("Force Panic due to Codec Write Fail");
 
 	return ret;
 }
@@ -800,6 +804,22 @@ static int wcd9xxx_init_supplies(struct wcd9xxx *wcd9xxx,
 			goto err_get;
 		}
 
+		/* Enabling Codec Buck Voltage to avoid voltage swing from 1.8 - 2.1V during sleep */
+		if(strcmp("cdc-vdd-buck",wcd9xxx->supplies[i].supply) == 0)
+		{
+			ret = regulator_enable(wcd9xxx->supplies[i].consumer);
+			if (ret) {
+				pr_err("%s: Setting regulator voltage failed for "
+					"regulator %s err = %d\n", __func__,
+					wcd9xxx->supplies[i].supply, ret);
+				goto err_get;
+			} else {
+				pr_err("%s: Setting regulator voltage success for "
+					"regulator %s err = %d\n", __func__,
+					wcd9xxx->supplies[i].supply, ret);
+			}
+		}
+
 		ret = regulator_set_optimum_mode(wcd9xxx->supplies[i].consumer,
 						pdata->regulator[i].optimum_uA);
 		if (ret < 0) {
@@ -1062,13 +1082,13 @@ static int __devinit wcd9xxx_i2c_probe(struct i2c_client *client,
 		if (!pdata) {
 			dev_dbg(&client->dev, "no platform data?\n");
 			ret = -EINVAL;
-			goto fail;
+			goto err_codec;
 		}
 		if (i2c_check_functionality(client->adapter,
 					    I2C_FUNC_I2C) == 0) {
 			dev_dbg(&client->dev, "can't talk I2C?\n");
 			ret = -EIO;
-			goto fail;
+			goto err_codec;
 		}
 		dev_set_drvdata(&client->dev, wcd9xxx);
 		wcd9xxx->dev = &client->dev;
@@ -1562,12 +1582,14 @@ static int wcd9xxx_slim_probe(struct slim_device *slim)
 	ret = wcd9xxx_init_supplies(wcd9xxx, pdata);
 	if (ret) {
 		pr_err("%s: Fail to init Codec supplies %d\n", __func__, ret);
+		panic("wcd Fail to init Codec supplies");
 		goto err_codec;
 	}
 	ret = wcd9xxx_enable_static_supplies(wcd9xxx, pdata);
 	if (ret) {
 		pr_err("%s: Fail to enable Codec pre-reset supplies\n",
 		       __func__);
+		panic("wcd Fail to enable Codec pre-reset supplies");
 		goto err_codec;
 	}
 	usleep_range(5, 5);
@@ -1584,6 +1606,7 @@ static int wcd9xxx_slim_probe(struct slim_device *slim)
 	if (ret) {
 		pr_err("%s: failed to get slimbus %s logical address: %d\n",
 		       __func__, wcd9xxx->slim->name, ret);
+		panic("wcd failed to get slimbus logical address");
 		goto err_reset;
 	}
 	wcd9xxx->read_dev = wcd9xxx_slim_read_device;
@@ -1597,6 +1620,7 @@ static int wcd9xxx_slim_probe(struct slim_device *slim)
 	ret = slim_add_device(slim->ctrl, wcd9xxx->slim_slave);
 	if (ret) {
 		pr_err("%s: error, adding SLIMBUS device failed\n", __func__);
+		panic("wcd error slim device add");
 		goto err_reset;
 	}
 
@@ -1615,6 +1639,7 @@ static int wcd9xxx_slim_probe(struct slim_device *slim)
 	ret = wcd9xxx_device_init(wcd9xxx);
 	if (ret) {
 		pr_err("%s: error, initializing device failed\n", __func__);
+		panic("wcd initializing device failed");
 		goto err_slim_add;
 	}
 #ifdef CONFIG_DEBUG_FS
@@ -1636,10 +1661,12 @@ static int wcd9xxx_slim_probe(struct slim_device *slim)
 	return ret;
 
 err_slim_add:
+	panic("wcd error slim adding");
 	slim_remove_device(wcd9xxx->slim_slave);
 err_reset:
 	wcd9xxx_free_reset(wcd9xxx);
 err_supplies:
+	panic("wcd error slim adding");
 	wcd9xxx_disable_supplies(wcd9xxx, pdata);
 err_codec:
 	kfree(wcd9xxx);

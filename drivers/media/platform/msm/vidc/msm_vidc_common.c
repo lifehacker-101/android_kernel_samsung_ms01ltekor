@@ -467,6 +467,8 @@ static void handle_session_init_done(enum command_response cmd, void *data)
 			inst->capability.scale_y = session_init_done->scale_y;
 			inst->capability.pixelprocess_capabilities =
 				call_hfi_op(hdev, get_core_capabilities);
+			inst->capability.mbs_per_frame =
+				session_init_done->mbs_per_frame;
 			inst->capability.capability_set = true;
 			inst->capability.buffer_mode[CAPTURE_PORT] =
 				session_init_done->alloc_mode_out;
@@ -1242,6 +1244,9 @@ static void handle_fbd(enum command_response cmd, void *data)
 		vb->v4l2_planes[0].reserved[3] = fill_buf_done->start_y_coord;
 		vb->v4l2_planes[0].reserved[4] = fill_buf_done->frame_width;
 		vb->v4l2_planes[0].reserved[5] = fill_buf_done->frame_height;
+		vb->v4l2_planes[0].reserved[6] = inst->prop.width[CAPTURE_PORT];
+		vb->v4l2_planes[0].reserved[7] = inst->prop.height[CAPTURE_PORT];
+		
 		if (vb->v4l2_planes[0].data_offset > vb->v4l2_planes[0].length)
 			dprintk(VIDC_INFO,
 				"fbd:Overflow data_offset = %d; length = %d\n",
@@ -1878,9 +1883,11 @@ static int msm_vidc_load_resources(int flipped_state,
 		dprintk(VIDC_ERR, "HW is overloaded, needed: %d max: %d\n",
 			num_mbs_per_sec, inst->core->resources.max_load);
 		msm_vidc_print_running_insts(inst->core);
+#if 0 /* Samsung skips the overloaded error return  */		
 		inst->state = MSM_VIDC_CORE_INVALID;
 		msm_comm_recover_from_session_error(inst);
 		return -EBUSY;
+#endif		
 	}
 
 	hdev = inst->core->device;
@@ -2546,6 +2553,15 @@ int msm_comm_qbuf(struct vb2_buffer *vb)
 				dprintk(VIDC_DBG,
 					"Received EOS on output capability\n");
 			}
+			/*Start : Qualcomm Local Patch - 20131226 */
+			if (vb->v4l2_buf.flags &
+				V4L2_MSM_BUF_FLAG_YUV_601_709_CLAMP) {
+				frame_data.flags |=
+					HAL_BUFFERFLAG_YUV_601_709_CSC_CLAMP;
+				dprintk(VIDC_DBG,
+					"Received buff with 601to709 clamp\n");
+			}
+			/*End : Qualcomm Local Patch - 20131226 */
 
 			if (vb->v4l2_buf.flags &
 					V4L2_QCOM_BUF_FLAG_CODECCONFIG) {
@@ -3307,7 +3323,11 @@ static int msm_vidc_load_supported(struct msm_vidc_inst *inst)
 			mutex_lock(&inst->sync_lock);
 			msm_vidc_print_running_insts(inst->core);
 			mutex_unlock(&inst->sync_lock);
+/* MMRND_AVRC. Start */
+#if 0 // Samsung skips the overloaded error return
 			return -EINVAL;
+#endif
+/* MMRND_AVRC. End */
 		}
 	}
 	return 0;

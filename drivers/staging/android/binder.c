@@ -1077,7 +1077,7 @@ static int binder_dec_node(struct binder_node *node, int strong, int internal)
 
 
 static struct binder_ref *binder_get_ref(struct binder_proc *proc,
-					 uint32_t desc)
+					 uint32_t desc, bool need_strong_ref)
 {
 	struct rb_node *n = proc->refs_by_desc.rb_node;
 	struct binder_ref *ref;
@@ -1085,12 +1085,16 @@ static struct binder_ref *binder_get_ref(struct binder_proc *proc,
 	while (n) {
 		ref = rb_entry(n, struct binder_ref, rb_node_desc);
 
-		if (desc < ref->desc)
+		if (desc < ref->desc) {
 			n = n->rb_left;
-		else if (desc > ref->desc)
+		} else if (desc > ref->desc) {
 			n = n->rb_right;
-		else
+		} else if (need_strong_ref && !ref->strong) {
+			binder_user_error("tried to use weak ref as strong ref\n");
+			return NULL;
+		} else {
 			return ref;
+		}
 	}
 	return NULL;
 }
@@ -1367,7 +1371,8 @@ static void binder_transaction_buffer_release(struct binder_proc *proc,
 		} break;
 		case BINDER_TYPE_HANDLE:
 		case BINDER_TYPE_WEAK_HANDLE: {
-			struct binder_ref *ref = binder_get_ref(proc, fp->handle);
+			struct binder_ref *ref = binder_get_ref(proc, fp->handle,
+						fp->type == BINDER_TYPE_HANDLE);
 			if (ref == NULL) {
 				binder_debug(BINDER_DEBUG_TOP_ERRORS,
 					     "binder: transaction release %d"
@@ -1404,6 +1409,7 @@ static void binder_transaction(struct binder_proc *proc,
 	struct binder_transaction *t;
 	struct binder_work *tcomplete;
 	size_t *offp, *off_end;
+	size_t off_min;
 	struct binder_proc *target_proc;
 	struct binder_thread *target_thread = NULL;
 	struct binder_node *target_node = NULL;
@@ -1467,7 +1473,7 @@ static void binder_transaction(struct binder_proc *proc,
 	} else {
 		if (tr->target.handle) {
 			struct binder_ref *ref;
-			ref = binder_get_ref(proc, tr->target.handle);
+			ref = binder_get_ref(proc, tr->target.handle, true);
 			if (ref == NULL) {
 				binder_user_error("binder: %d:%d got "
 					"transaction to invalid handle\n",
@@ -1604,18 +1610,22 @@ static void binder_transaction(struct binder_proc *proc,
 		goto err_bad_offset;
 	}
 	off_end = (void *)offp + tr->offsets_size;
+	off_min = 0;
 	for (; offp < off_end; offp++) {
 		struct flat_binder_object *fp;
 		if (*offp > t->buffer->data_size - sizeof(*fp) ||
+		    *offp < off_min ||
 		    t->buffer->data_size < sizeof(*fp) ||
 		    !IS_ALIGNED(*offp, sizeof(void *))) {
 			binder_user_error("binder: %d:%d got transaction with "
-				"invalid offset, %zd\n",
-				proc->pid, thread->pid, *offp);
+				"invalid offset, %zd(min %zd, max %zd)\n",
+				proc->pid, thread->pid, *offp, (u32)off_min,
+				(u32)(t->buffer->data_size - sizeof(*fp)));
 			return_error = BR_FAILED_REPLY;
 			goto err_bad_offset;
 		}
 		fp = (struct flat_binder_object *)(t->buffer->data + *offp);
+		off_min = *offp + sizeof(struct flat_binder_object);
 		switch (fp->type) {
 		case BINDER_TYPE_BINDER:
 		case BINDER_TYPE_WEAK_BINDER: {
@@ -1651,7 +1661,9 @@ static void binder_transaction(struct binder_proc *proc,
 				fp->type = BINDER_TYPE_HANDLE;
 			else
 				fp->type = BINDER_TYPE_WEAK_HANDLE;
+			fp->binder = 0;
 			fp->handle = ref->desc;
+			fp->cookie = 0;
 			binder_inc_ref(ref, fp->type == BINDER_TYPE_HANDLE,
 				       &thread->todo);
 
@@ -1662,7 +1674,8 @@ static void binder_transaction(struct binder_proc *proc,
 		} break;
 		case BINDER_TYPE_HANDLE:
 		case BINDER_TYPE_WEAK_HANDLE: {
-			struct binder_ref *ref = binder_get_ref(proc, fp->handle);
+			struct binder_ref *ref = binder_get_ref(proc, fp->handle,
+						fp->type == BINDER_TYPE_HANDLE);
 			if (ref == NULL) {
 				binder_user_error("binder: %d:%d got "
 					"transaction with invalid "
@@ -1694,7 +1707,9 @@ static void binder_transaction(struct binder_proc *proc,
 					return_error = BR_FAILED_REPLY;
 					goto err_binder_get_ref_for_node_failed;
 				}
+				fp->binder = 0;
 				fp->handle = new_ref->desc;
+				fp->cookie = 0;
 				binder_inc_ref(new_ref, fp->type == BINDER_TYPE_HANDLE, NULL);
 				binder_debug(BINDER_DEBUG_TRANSACTION,
 					     "        ref %d desc %d -> ref %d desc %d (node %d)\n",
@@ -1743,6 +1758,7 @@ static void binder_transaction(struct binder_proc *proc,
 			binder_debug(BINDER_DEBUG_TRANSACTION,
 				     "        fd %ld -> %d\n", fp->handle, target_fd);
 			/* TODO: fput? */
+			fp->binder = 0;
 			fp->handle = target_fd;
 		} break;
 
@@ -1863,7 +1879,9 @@ int binder_thread_write(struct binder_proc *proc, struct binder_thread *thread,
 						ref->desc);
 				}
 			} else
-				ref = binder_get_ref(proc, target);
+				ref = binder_get_ref(proc, target,
+						     cmd == BC_ACQUIRE ||
+						     cmd == BC_RELEASE);
 			if (ref == NULL) {
 				binder_user_error("binder: %d:%d refcou"
 					"nt change on invalid ref %d\n",
@@ -2075,7 +2093,7 @@ int binder_thread_write(struct binder_proc *proc, struct binder_thread *thread,
 			if (get_user(cookie, (void __user * __user *)ptr))
 				return -EFAULT;
 			ptr += sizeof(void *);
-			ref = binder_get_ref(proc, target);
+			ref = binder_get_ref(proc, target, false);
 			if (ref == NULL) {
 				binder_user_error("binder: %d:%d %s "
 					"invalid ref %d\n",
@@ -2847,9 +2865,15 @@ static void binder_vma_close(struct vm_area_struct *vma)
 	binder_defer_work(proc, BINDER_DEFERRED_PUT_FILES);
 }
 
+static int binder_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
+{
+	return VM_FAULT_SIGBUS;
+}
+
 static struct vm_operations_struct binder_vm_ops = {
 	.open = binder_vma_open,
 	.close = binder_vma_close,
+	.fault = binder_vm_fault,
 };
 
 static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
@@ -2863,6 +2887,19 @@ static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
 	if ((vma->vm_end - vma->vm_start) > SZ_4M)
 		vma->vm_end = vma->vm_start + SZ_4M;
 
+
+#ifdef CONFIG_TIMA_RKP
+	if (vma->vm_end - vma->vm_start) {
+		/* iommu optimization- needs to be turned ON from
+		* the tz side.
+		*/
+		cpu_v7_tima_iommu_opt(vma->vm_start, vma->vm_end, (unsigned long)vma->vm_mm->pgd);
+		__asm__ __volatile__ (
+		"mcr    p15, 0, r0, c8, c3, 0\n"
+		"dsb\n"
+		"isb\n");
+	}
+#endif
 	binder_debug(BINDER_DEBUG_OPEN_CLOSE,
 		     "binder_mmap: %d %lx-%lx (%ld K) vma %lx pagep %lx\n",
 		     proc->pid, vma->vm_start, vma->vm_end,
@@ -3331,7 +3368,7 @@ static void print_binder_node(struct seq_file *m, struct binder_node *node)
 
 static void print_binder_ref(struct seq_file *m, struct binder_ref *ref)
 {
-	seq_printf(m, "  ref %d: desc %d %snode %d s %d w %d d %p\n",
+	seq_printf(m, "  ref %d: desc %d %snode %d s %d w %d d %pK\n",
 		   ref->debug_id, ref->desc, ref->node->proc ? "" : "dead ",
 		   ref->node->debug_id, ref->strong, ref->weak, ref->death);
 }
@@ -3578,13 +3615,25 @@ static int binder_transactions_show(struct seq_file *m, void *unused)
 
 static int binder_proc_show(struct seq_file *m, void *unused)
 {
+	struct binder_proc *itr;
 	struct binder_proc *proc = m->private;
+	struct hlist_node *pos;
 	int do_lock = !binder_debug_no_lock;
+	bool valid_proc = false;
 
 	if (do_lock)
 		mutex_lock(&binder_lock);
-	seq_puts(m, "binder proc state:\n");
-	print_binder_proc(m, proc, 1);
+
+	hlist_for_each_entry(itr, pos, &binder_procs, proc_node) {
+		if (itr == proc) {
+			valid_proc = true;
+			break;
+		}
+	}
+	if (valid_proc) {
+		seq_puts(m, "binder proc state:\n");
+		print_binder_proc(m, proc, 1);
+	}
 	if (do_lock)
 		mutex_unlock(&binder_lock);
 	return 0;

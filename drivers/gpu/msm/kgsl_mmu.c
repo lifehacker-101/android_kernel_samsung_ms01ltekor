@@ -104,7 +104,7 @@ static void _kgsl_destroy_pagetable(struct kgsl_pagetable *pagetable)
 static void kgsl_destroy_pagetable(struct kref *kref)
 {
 	struct kgsl_pagetable *pagetable = container_of(kref,
-		struct kgsl_pagetable, refcount);
+	 struct kgsl_pagetable, refcount);
 	unsigned long flags;
 
 	spin_lock_irqsave(&kgsl_driver.ptlock, flags);
@@ -117,7 +117,7 @@ static void kgsl_destroy_pagetable(struct kref *kref)
 static void kgsl_destroy_pagetable_locked(struct kref *kref)
 {
 	struct kgsl_pagetable *pagetable = container_of(kref,
-		struct kgsl_pagetable, refcount);
+	 struct kgsl_pagetable, refcount);
 
 	list_del(&pagetable->list);
 

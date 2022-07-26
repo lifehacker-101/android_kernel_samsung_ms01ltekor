@@ -1527,6 +1527,12 @@ static int __devinit qpnp_iadc_probe(struct spmi_device *spmi)
 	schedule_delayed_work(&iadc->iadc_work,
 			round_jiffies_relative(msecs_to_jiffies
 					(QPNP_IADC_CALIB_SECONDS)));
+
+#if defined(CONFIG_MACH_VASTALTE_CHN_CMCC_DUOS)
+	rc = qpnp_iadc_write_reg(iadc, 0x49, 0);
+	if (rc)
+		dev_err(&spmi->dev, "Failed to write rsnsn ctl %d\n", rc);
+#endif
 	return 0;
 fail:
 	for_each_child_of_node(node, child) {
@@ -1535,6 +1541,7 @@ fail:
 		i++;
 	}
 	hwmon_device_unregister(iadc->iadc_hwmon);
+	mutex_destroy(&iadc->adc->adc_lock);
 
 	return rc;
 }

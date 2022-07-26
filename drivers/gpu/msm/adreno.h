@@ -483,10 +483,12 @@ unsigned int adreno_a3xx_rbbm_clock_ctl_default(struct adreno_device
 struct kgsl_memdesc *adreno_find_region(struct kgsl_device *device,
 						phys_addr_t pt_base,
 						unsigned int gpuaddr,
-						unsigned int size);
+						unsigned int size,
+						struct kgsl_mem_entry **entry);
 
 uint8_t *adreno_convertaddr(struct kgsl_device *device,
-	phys_addr_t pt_base, unsigned int gpuaddr, unsigned int size);
+	phys_addr_t pt_base, unsigned int gpuaddr, unsigned int size,
+	struct kgsl_mem_entry **entry);
 
 struct kgsl_memdesc *adreno_find_ctxtmem(struct kgsl_device *device,
 	phys_addr_t pt_base, unsigned int gpuaddr, unsigned int size);
@@ -572,6 +574,8 @@ static inline int adreno_is_a2xx(struct adreno_device *adreno_dev)
 {
 	return (adreno_dev->gpurev <= 299);
 }
+
+bool adreno_hw_isidle(struct kgsl_device *device);
 
 static inline int adreno_is_a3xx(struct adreno_device *adreno_dev)
 {
@@ -941,5 +945,11 @@ static inline void adreno_set_protected_registers(struct kgsl_device *device,
 	kgsl_regwrite(device, A3XX_CP_PROTECT_REG_0 + *index, val);
 	*index = *index + 1;
 }
+
+#ifdef CONFIG_DEBUG_FS
+void adreno_debugfs_init(struct kgsl_device *device);
+#else
+static inline void adreno_debugfs_init(struct kgsl_device *device) { }
+#endif
 
 #endif /*__ADRENO_H */

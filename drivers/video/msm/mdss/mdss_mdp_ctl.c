@@ -37,7 +37,10 @@ static inline u64 apply_fudge_factor(u64 val,
 {
 		return fudge_factor(val, factor->numer, factor->denom);
 }
-
+#ifdef CONFIG_VIDEO_MHL_V2
+extern int hdmi_hpd_status(void);
+static struct mdss_fudge_factor extra_factor = { 13, 10 }; /* 13 / 10 = 1.3 */
+#endif
 static DEFINE_MUTEX(mdss_mdp_ctl_lock);
 
 static int mdss_mdp_mixer_free(struct mdss_mdp_mixer *mixer);
@@ -62,7 +65,6 @@ static inline u32 mdss_mdp_clk_fudge_factor(struct mdss_mdp_mixer *mixer,
 						u32 rate)
 {
 	struct mdss_panel_info *pinfo = &mixer->ctl->panel_data->panel_info;
-
 	rate = apply_fudge_factor(rate, &mdss_res->clk_factor);
 
 	/*
@@ -386,6 +388,10 @@ int mdss_mdp_perf_calc_pipe(struct mdss_mdp_pipe *pipe,
 		perf->bw_overlap = quota;
 	} else {
 		perf->bw_overlap = (quota / dst.h) * v_total;
+	}
+
+	if ( ((pipe->src.h * pipe->src.w) / (pipe->dst.h * pipe->dst.w)) > 10) {
+		perf->bw_overlap = perf->bw_overlap * 3;
 	}
 
 	perf->mdp_clk_rate = mdss_mdp_clk_fudge_factor(mixer, rate);
@@ -785,6 +791,7 @@ u32 mdss_mdp_ctl_perf_get_transaction_status(struct mdss_mdp_ctl *ctl)
 	return transaction_status;
 }
 
+
 static inline void mdss_mdp_ctl_perf_update_bus(struct mdss_mdp_ctl *ctl)
 {
 	u64 bw_sum_of_intfs = 0;
@@ -805,6 +812,12 @@ static inline void mdss_mdp_ctl_perf_update_bus(struct mdss_mdp_ctl *ctl)
 				ctl->cur_perf.bw_ctl);
 		}
 	}
+
+#ifdef CONFIG_VIDEO_MHL_V2
+	if (hdmi_hpd_status())
+		bw_sum_of_intfs = apply_fudge_factor(bw_sum_of_intfs, &extra_factor);
+#endif
+
 	bus_ib_quota = bw_sum_of_intfs;
 	bus_ab_quota = apply_fudge_factor(bw_sum_of_intfs,
 		&mdss_res->ab_factor);
@@ -861,6 +874,9 @@ void mdss_mdp_ctl_perf_release_bw(struct mdss_mdp_ctl *ctl)
 exit:
 	mutex_unlock(&mdss_mdp_ctl_lock);
 }
+
+#define ADDING_BW_ROTATE_MODE 130
+#define ADDING_BW_LANDSCAPE_MODE 107
 
 static void mdss_mdp_ctl_perf_update(struct mdss_mdp_ctl *ctl,
 		int params_changed)
@@ -1183,8 +1199,7 @@ int mdss_mdp_wb_mixer_destroy(struct mdss_mdp_mixer *mixer)
 	return 0;
 }
 
-static inline struct mdss_mdp_ctl *mdss_mdp_get_split_ctl(
-		struct mdss_mdp_ctl *ctl)
+static inline struct mdss_mdp_ctl *mdss_mdp_get_split_ctl(struct mdss_mdp_ctl *ctl)
 {
 	if (ctl && ctl->mixer_right && (ctl->mixer_right->ctl != ctl))
 		return ctl->mixer_right->ctl;
@@ -1208,6 +1223,31 @@ int mdss_mdp_ctl_splash_finish(struct mdss_mdp_ctl *ctl, bool handoff)
 		return 0;
 	}
 }
+
+#if defined(CONFIG_FB_MSM_EDP_SAMSUNG)
+int mdss_mdp_scan_pipes(void)
+{
+	unsigned long  off;
+	u32  size;
+	int i, pnum = 0;
+
+	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON, false);
+	for (i = 0; i < 6; i++) {
+		off = MDSS_MDP_REG_SSPP_OFFSET(i) + MDSS_MDP_REG_SSPP_SRC_SIZE;
+
+		size = MDSS_MDP_REG_READ(off);
+
+		pr_debug("%s: i=%d: addr=%x hw=%x\n",
+				__func__, i, (int)off, (int)size);
+		if (size)
+			pnum++;
+
+	}
+	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
+
+	return pnum;
+}
+#endif
 
 static inline int mdss_mdp_set_split_ctl(struct mdss_mdp_ctl *ctl,
 		struct mdss_mdp_ctl *split_ctl)
@@ -1455,9 +1495,16 @@ struct mdss_mdp_ctl *mdss_mdp_ctl_init(struct mdss_panel_data *pdata,
 		ctl->intf_type = MDSS_INTF_HDMI;
 		ctl->opmode = MDSS_MDP_CTL_OP_VIDEO_MODE;
 		ctl->start_fnc = mdss_mdp_video_start;
+#ifndef CONFIG_VIDEO_MHL_V2
+/*
+* mdss_mdp_limited_lut_igc_config() is for make limited range
+* but we use limited range in MHL driver side
+* so comment that function
+*/
 		ret = mdss_mdp_limited_lut_igc_config(ctl);
 		if (ret)
 			pr_err("Unable to config IGC LUT data");
+#endif
 		break;
 	case WRITEBACK_PANEL:
 		ctl->intf_num = MDSS_MDP_NO_INTF;
@@ -1570,17 +1617,14 @@ static void mdss_mdp_ctl_split_display_enable(int enable,
 		if (main_ctl->opmode & MDSS_MDP_CTL_OP_CMD_MODE) {
 			upper |= BIT(1);
 			lower |= BIT(1);
-
-			/* interface controlling sw trigger */
-			if (main_ctl->intf_num == MDSS_MDP_INTF2)
-				upper |= BIT(4);
-			else
-				upper |= BIT(8);
-		} else { /* video mode */
-			if (main_ctl->intf_num == MDSS_MDP_INTF2)
+		}
+		/* interface controlling sw trigger (cmd & video mode)*/
+		if (main_ctl->intf_num == MDSS_MDP_INTF2) {
 				lower |= BIT(4);
-			else
+				upper |= BIT(4);
+		} else {
 				lower |= BIT(8);
+				upper |= BIT(8);
 		}
 	}
 	MDSS_MDP_REG_WRITE(MDSS_MDP_REG_SPLIT_DISPLAY_UPPER_PIPE_CTRL, upper);
@@ -1656,7 +1700,6 @@ void mdss_mdp_ctl_restore(struct mdss_mdp_ctl *ctl)
 	writel_relaxed(temp, ctl->mdata->mdp_base +
 		MDSS_MDP_REG_DISP_INTF_SEL);
 }
-
 static int mdss_mdp_ctl_start_sub(struct mdss_mdp_ctl *ctl, bool handoff)
 {
 	struct mdss_mdp_mixer *mixer;
@@ -2343,6 +2386,11 @@ int mdss_mdp_display_wakeup_time(struct mdss_mdp_ctl *ctl,
 	u32 time_of_line, time_to_vsync;
 	ktime_t current_time = ktime_get();
 
+	if (!ctl) {
+		pr_err("%s : invalid ctl\n", __func__);
+		return -ENODEV;
+	}
+
 	if (!ctl->read_line_cnt_fnc)
 		return -ENOSYS;
 
@@ -2452,6 +2500,10 @@ int mdss_mdp_display_wait4pingpong(struct mdss_mdp_ctl *ctl)
 	return ret;
 }
 
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+struct mdss_mdp_ctl *commit_ctl;
+#endif
+
 int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg)
 {
 	struct mdss_mdp_ctl *sctl = NULL;
@@ -2463,6 +2515,10 @@ int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg)
 		pr_err("display function not set\n");
 		return -ENODEV;
 	}
+
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+	commit_ctl = ctl;
+#endif
 
 	mutex_lock(&ctl->lock);
 	pr_debug("commit ctl=%d play_cnt=%d\n", ctl->num, ctl->play_cnt);
@@ -2518,7 +2574,8 @@ int mdss_mdp_display_commit(struct mdss_mdp_ctl *ctl, void *arg)
 	}
 
 	ATRACE_BEGIN("frame_ready");
-	mdss_mdp_ctl_notify(ctl, MDP_NOTIFY_FRAME_READY);
+	if (!ctl->shared_lock)
+		mdss_mdp_ctl_notify(ctl, MDP_NOTIFY_FRAME_READY);
 	ATRACE_END("frame_ready");
 
 	ATRACE_BEGIN("wait_pingpong");
@@ -2707,3 +2764,18 @@ int mdss_mdp_mixer_handoff(struct mdss_mdp_ctl *ctl, u32 num,
 
 	return rc;
 }
+#if defined (CONFIG_FB_MSM_MDSS_DSI_DBG)
+void mdss_mdp_mixer_read(void)
+{
+	int i, off;
+	u32 data[4];
+
+	for (i=0; i < 4; i++) {
+		off =  MDSS_MDP_REG_CTL_LAYER(i);
+		data[i] = mdss_mdp_ctl_read(commit_ctl, off);
+	}
+	xlog(__func__, data[0], data[1], data[2], data[3], off, 0);
+
+}
+#endif
+
